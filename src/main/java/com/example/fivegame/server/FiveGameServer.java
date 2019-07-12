@@ -13,11 +13,11 @@ import javax.websocket.server.ServerEndpoint;
 import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * @author white matter
  */
-
 @ServerEndpoint(value = "/Five/{u_name}/{u_id}/{roomNumber}", configurator = GetHttpSessionConfigurator.class)
 @Component
 public class FiveGameServer {
@@ -26,22 +26,22 @@ public class FiveGameServer {
     // 用来存放每个客户端对应的FiveGameServer对象。
 //    private static final Map<String,FiveGameServer> FIVE_GAME_SERVER_MAP = new ConcurrentHashMap<>();
 
-    private static final Map<Integer, List<FiveGameServer>> TwoServerMap = new ConcurrentHashMap<>();
-    private static List<FiveGameServer> listTwo = new ArrayList<>();
+    private static final ConcurrentHashMap<Integer, CopyOnWriteArrayList<FiveGameServer>> TwoServerMap = new ConcurrentHashMap<>();
+    private static CopyOnWriteArrayList<FiveGameServer> listTwo = new CopyOnWriteArrayList<>();
 
     //房间号和u_id 唯一标识
-    private static HashMap<Integer, List<String>> RoomMap = new HashMap<>();
-    private static List<String> listR = new ArrayList<>();
+    private static ConcurrentHashMap<Integer, CopyOnWriteArrayList<String>> RoomMap = new ConcurrentHashMap<>();
+    private static CopyOnWriteArrayList<String> listR = new CopyOnWriteArrayList<>();
 
     //房间号和u_name
-    private static HashMap<Integer, List<String>> RoomMapA = new HashMap<>();
-    private static List<String> listRA = new ArrayList<>();
+    private static ConcurrentHashMap<Integer, CopyOnWriteArrayList<String>> RoomMapA = new ConcurrentHashMap<>();
+    private static CopyOnWriteArrayList<String> listRA = new CopyOnWriteArrayList<>();
 
     //房间号和棋盘的二维数组
     private static Map<Integer, int[][]> chessboardMap = new HashMap<>();
 
     //u_id玩家的准备状态
-    private static HashMap<String, String> statusMap = new HashMap<>();
+    private static ConcurrentHashMap<String, String> statusMap = new ConcurrentHashMap<>();
 
     //房间号和 初始棋子出棋
     private static HashMap<Integer, Integer> colorMap = new HashMap<>();
@@ -50,7 +50,7 @@ public class FiveGameServer {
     private static Map<Integer, Integer> beginMap = new HashMap<>();
 
     //u_id和棋子颜色绑定 0 白色 1 黑色
-    private static Map<String, Integer> u_idColorMap = new HashMap<>();
+    private static ConcurrentHashMap<String, Integer> u_idColorMap = new ConcurrentHashMap<>();
 
     private Session session;
 
@@ -65,11 +65,25 @@ public class FiveGameServer {
     @OnOpen
     public void onopen(Session session, @PathParam("roomNumber") int roomNumber, @PathParam("u_id") String u_id, @PathParam("u_name") String u_name, EndpointConfig config) {
         //TODO
+        //一个页面一个session？
+        //获取HttpSession
+        HttpSession httpSession = (HttpSession) config.getUserProperties().get(HttpSession.class.getName());
+        this.httpSession = httpSession;
+        httpSession.setAttribute("u_id", u_id);
+        httpSession.setAttribute("u_name", u_name);
+        this.u_id = (String) httpSession.getAttribute("u_id");
+        this.u_name = (String) httpSession.getAttribute("u_name");
+        this.roomNuber = roomNumber;
         //这里应该用数据库来操作账户的重复
         listR.add(u_id);
+
+        System.out.println("listR"+" "+listR.size());
         //只有一种情况重复
-        if (u_id.equals(listR.get(0)) && listR.size() == 2) {
+        if (u_id.equals(listR.get(0)) && listR.size() ==2) {
             session.getAsyncRemote().sendText("用户ID已经重复");
+            listR.remove(listR.size() - 1);
+        }else if (listR.size()>2){
+            session.getAsyncRemote().sendText("请不要重复进入房间");
             listR.remove(listR.size() - 1);
         } else {
             //这里可以通过数据库获取昵称
@@ -78,15 +92,6 @@ public class FiveGameServer {
             int[][] oriData = new int[15][20];
             //初始化第一步下棋棋子的颜色
             int count = 0;
-            //一个页面一个session？
-            //获取HttpSession
-            HttpSession httpSession = (HttpSession) config.getUserProperties().get(HttpSession.class.getName());
-            this.httpSession = httpSession;
-            httpSession.setAttribute("u_id", u_id);
-            httpSession.setAttribute("u_name", u_name);
-            this.u_id = (String) httpSession.getAttribute("u_id");
-            this.u_name = (String) httpSession.getAttribute("u_name");
-            this.roomNuber = roomNumber;
 
             if (u_idColorMap.size() == 0) {
                 //默认第一个加入的为 黑棋手
@@ -114,25 +119,22 @@ public class FiveGameServer {
                 RoomMapA.put(roomNumber, listRA);
                 System.out.println("房间人数已满，请选择其他房间");
                 session.getAsyncRemote().sendText("房间人数已满，请选择其他房间");
-            } else if (roomSize == 2 && listTwo.size() == 2) {
+            } else if (roomSize == 2 && listTwo.size() == 2) { //指定房间号加入 这里还有 bug用数据库或许会更好
 
-                //进入房间后，默认为准备状态
+                //进入房间后，默认为未准备状态
                 statusMap.put(u_id, "1");
 
-                StringBuffer sb = new StringBuffer();
-
-                for (String string : listRA) {
-                    sb.append(string).append("；");
-                }
+                String userA = listRA.get(listRA.size()-2);
+                String userB = listRA.get(listRA.size()-1);
 
                 colorMap.put(roomNumber, count);
 
                 //之前已经有玩家加入房间了
 
-                sendText(u_name + "已进入房间，请双方准备即开始比赛!" + "当前房间有:" + sb.toString(), listTwo);
+                sendText(u_name + "已进入房间，请双方准备即开始比赛!" + "当前房间有:" + userA+";"+userB, listTwo);
 
                 //双方进入后，记录为 未开局状态
-                beginMap.put(roomNumber, 0);
+                beginMap.put(roomNumber,0);
 
                 //初始化棋盘并与 房间号roomNumber一起存进Map中
                 oriData = beginchessboard(oriData);
@@ -153,6 +155,9 @@ public class FiveGameServer {
                 chessboardMap.put(roomNumber, oriData);
             }
         }
+        System.out.println("RoomMap"+RoomMap.size());
+        System.out.println("RoomMapA"+RoomMapA.size());
+        System.out.println("listTwo"+listTwo.size());
     }
 
     /**
@@ -193,8 +198,10 @@ public class FiveGameServer {
             sendText(u_name + "说：" + result.getContent() + "--", listTwo);
         }
 
+        System.out.println("listTwo"+ "  "+listTwo.size());
+        System.out.println("statusMap："+"   "+ statusMap.size()+"statusMap1号："+ statusMap.get(listR.get(0))+"  "+ "statusMap2号:" + statusMap.get(listR.get(1)));
         //这里是 status 判断双方是否都准备，开始比赛。 "1"未准备 "2"已准备
-        if (listTwo.size() == 2 && beginMap.get(roomNuber) == 0 && statusMap.size() == 2 && (result.getXy() == null || result.getXy() == "")) {
+        if (listTwo.size() == 2 && beginMap.get(roomNuber) == 0 && statusMap.size() >= 2 && (result.getXy() == null || result.getXy() == "")) {
             if ("2".equals(statusMap.get(listR.get(0))) && "2".equals(statusMap.get(listR.get(1)))) {
                 System.out.println("双方都已经准备，游戏开始！");
                 for (FiveGameServer fiveGameServer : listTwo) {
@@ -245,6 +252,7 @@ public class FiveGameServer {
                                     //记录此次下棋后的棋盘
                                     chessboardMap.put(roomNuber, oriData);
                                 }
+
                                 if (success == 1) {
                                     sendText("黑手" + "：" + u_name + "  获胜", listTwo);
                                     //获胜后 初始化棋盘
@@ -267,8 +275,6 @@ public class FiveGameServer {
                                     colorMap.put(roomNuber, 0);
                                     //初始化beginMap
                                     beginMap.put(roomNuber, 0);
-                                } else {
-                                        sendText("现在轮到对手下棋", listTwo);
                                 }
                             } else {
                                 synchronized (session) {
@@ -349,25 +355,57 @@ public class FiveGameServer {
         }
 
         //删掉 TwoServerMap对应的房间号里面的 server
-        for (int i = 0; i < TwoServerMap.size(); i++) {
-            if (TwoServerMap.get(roomNuber).get(i) == this) {
-                TwoServerMap.get(roomNuber).remove(i);
+//      private static final ConcurrentHashMap<Integer,CopyOnWriteArrayList<FiveGameServer>> TwoServerMap = new ConcurrentHashMap<>();
+
+        CopyOnWriteArrayList<FiveGameServer> newTwoList = new CopyOnWriteArrayList();
+        newTwoList = TwoServerMap.get(roomNuber);
+        for (FiveGameServer fiveGameServer : newTwoList){
+            if (fiveGameServer == this){
+                newTwoList.remove(this);
+            }
+        }
+        TwoServerMap.put(roomNuber,newTwoList);
+
+
+        for (int i = 0;i<listRA.size();i++){
+            if (u_name.equals(listRA.get(i))){
+                listRA.remove(i);
+            }
+        }
+
+        for (int i = 0;i<listR.size();i++){
+            if (u_id.equals(listR.get(i))){
+                listR.remove(i);
             }
         }
 
         //删掉 RoomMap对应房间号的 u_id
-        for (int i = 0; i < RoomMap.size(); i++) {
-            if (u_id.equals(RoomMap.get(roomNuber).get(i))) {
-                RoomMap.get(roomNuber).remove(i);
+        CopyOnWriteArrayList<String> newListR = new CopyOnWriteArrayList();
+        newListR = RoomMap.get(roomNuber);
+        for (String s : newListR){
+            if (s.equals(this)){
+                newListR.remove(this);
             }
         }
 
+        RoomMap.put(roomNuber,newListR);
+
         //删掉 RoomMapA 对应房间号的 u_name
-        for (int i = 0; i < RoomMapA.size(); i++) {
-            if (u_name.equals(RoomMapA.get(roomNuber).get(i).equals(u_name))) {
-                RoomMapA.get(roomNuber).remove(i);
+        CopyOnWriteArrayList<String> newListRA = new CopyOnWriteArrayList();
+        newListRA = RoomMapA.get(roomNuber);
+        for (String s : newListRA){
+            if (s.equals(this)){
+                newListRA.remove(this);
             }
         }
+
+        RoomMapA.put(roomNuber,newListRA);
+
+        //关闭连接移除准备状态
+        statusMap.remove(u_id);
+
+        //关闭连接移除 棋手颜色状态
+        u_idColorMap.remove(u_id);
     }
 
     /**
@@ -381,3 +419,5 @@ public class FiveGameServer {
     }
 
 }
+
+
